@@ -7,9 +7,11 @@ import {
   FileText,
   LayoutDashboard,
   LoaderCircle,
+  Mail,
   Menu,
   Plus,
   Search,
+  Send,
   Sparkles,
   X
 } from "lucide-react";
@@ -33,6 +35,19 @@ export default function App() {
   const [error, setError] = useState("");
   const [query, setQuery] = useState("");
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [activeView, setActiveView] = useState("dashboard");
+  const [messages, setMessages] = useState([]);
+  const [messageLoading, setMessageLoading] = useState(true);
+  const [messageError, setMessageError] = useState("");
+  const [messageForm, setMessageForm] = useState({
+    to: "",
+    cc: "",
+    bcc: "",
+    subject: "",
+    body: ""
+  });
+  const [isSending, setIsSending] = useState(false);
+  const [sendStatus, setSendStatus] = useState(null);
 
   useEffect(() => {
     fetch(`${API_URL}/todos`)
@@ -43,6 +58,15 @@ export default function App() {
       .then(setTodos)
       .catch((requestError) => setError(requestError.message))
       .finally(() => setIsLoading(false));
+
+    fetch(`${API_URL}/messages`)
+      .then(async (response) => {
+        if (!response.ok) throw new Error("Unable to load messages.");
+        return response.json();
+      })
+      .then(setMessages)
+      .catch((requestError) => setMessageError(requestError.message))
+      .finally(() => setMessageLoading(false));
   }, []);
 
   const filteredTodos = useMemo(
@@ -84,6 +108,38 @@ export default function App() {
     }
   }
 
+  async function handleSendMessage(event) {
+    event.preventDefault();
+    setMessageError("");
+    setSendStatus(null);
+
+    if (!messageForm.to.trim() || !messageForm.subject.trim() || !messageForm.body.trim()) {
+      setMessageError("To, subject, and body are required.");
+      return;
+    }
+
+    setIsSending(true);
+    try {
+      const response = await fetch(`${API_URL}/messages`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(messageForm)
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.message || "Unable to send message.");
+      setMessages((current) => [body, ...current]);
+      setMessageForm({ to: "", cc: "", bcc: "", subject: "", body: "" });
+      setSendStatus({
+        snsStatus: body.sns?.status || "skipped",
+        snsMessage: body.sns?.message || "Message sent."
+      });
+    } catch (requestError) {
+      setMessageError(requestError.message);
+    } finally {
+      setIsSending(false);
+    }
+  }
+
   return (
     <div className="min-h-screen bg-slate-50">
       <header className="flex items-center justify-between border-b border-slate-200 bg-white px-5 py-4 lg:hidden">
@@ -104,12 +160,15 @@ export default function App() {
           </div>
           <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-400">Workspace</p>
           <nav className="space-y-1">
-            <a className="flex items-center gap-3 rounded-xl bg-lavender px-3 py-3 text-sm font-semibold text-indigo-700" href="#dashboard">
+            <button onClick={() => { setActiveView("dashboard"); setMobileNavOpen(false); }} className={`flex w-full items-center gap-3 rounded-xl px-3 py-3 text-sm ${activeView === "dashboard" ? "bg-lavender font-semibold text-indigo-700" : "font-medium text-slate-500 hover:bg-slate-50"}`}>
               <LayoutDashboard size={18} /> Dashboard
-            </a>
-            <a className="flex items-center gap-3 rounded-xl px-3 py-3 text-sm font-medium text-slate-500 hover:bg-slate-50" href="#tasks">
+            </button>
+            <button onClick={() => { setActiveView("dashboard"); setMobileNavOpen(false); setQuery(""); }} className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-sm font-medium text-slate-500 hover:bg-slate-50">
               <ClipboardList size={18} /> All tasks
-            </a>
+            </button>
+            <button onClick={() => { setActiveView("messages"); setMobileNavOpen(false); }} className={`flex w-full items-center gap-3 rounded-xl px-3 py-3 text-sm ${activeView === "messages" ? "bg-lavender font-semibold text-indigo-700" : "font-medium text-slate-500 hover:bg-slate-50"}`}>
+              <Mail size={18} /> Messages
+            </button>
           </nav>
           <div className="mt-auto pt-16">
             <div className="rounded-2xl bg-ink p-5 text-white">
@@ -120,6 +179,20 @@ export default function App() {
         </aside>
 
         <main className="w-full px-5 py-8 sm:px-8 lg:px-12 lg:py-12" id="dashboard">
+          {activeView === "messages" ? (
+            <MessagesView
+              messages={messages}
+              isLoading={messageLoading}
+              error={messageError}
+              form={messageForm}
+              setForm={setMessageForm}
+              isSending={isSending}
+              onSubmit={handleSendMessage}
+              onDashboard={() => setActiveView("dashboard")}
+              sendStatus={sendStatus}
+            />
+          ) : (
+          <>
           <div className="mb-10 flex flex-col justify-between gap-5 md:flex-row md:items-end">
             <div>
               <p className="mb-2 text-sm font-medium text-indigo-600">Good morning, there</p>
@@ -157,6 +230,8 @@ export default function App() {
               </form>
             </section>
           </div>
+          </>
+          )}
         </main>
       </div>
     </div>
@@ -165,4 +240,79 @@ export default function App() {
 
 function StatCard({ label, value, icon }) {
   return <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><div className="mb-5 flex items-center justify-between"><span className="text-sm text-slate-500">{label}</span><span className="rounded-lg bg-slate-100 p-2 text-slate-600">{icon}</span></div><p className="text-3xl font-bold text-ink">{value}</p></div>;
+}
+
+function MessagesView({ messages, isLoading, error, form, setForm, isSending, onSubmit, onDashboard, sendStatus }) {
+  const updateField = (field) => (event) => {
+    setForm((current) => ({ ...current, [field]: event.target.value }));
+  };
+
+  return (
+    <div>
+      <div className="mb-8 flex items-end justify-between gap-4">
+        <div>
+          <p className="mb-2 text-sm font-medium text-indigo-600">Email workspace</p>
+          <h1 className="text-3xl font-bold tracking-tight text-ink sm:text-4xl">Messages</h1>
+          <p className="mt-2 text-sm text-slate-500">Send emails and review your sent messages.</p>
+        </div>
+        <button onClick={onDashboard} className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-600 hover:bg-slate-50">
+          Back to Dashboard
+        </button>
+      </div>
+
+      <div className="grid gap-8 xl:grid-cols-[360px_minmax(0,1fr)]">
+        <section className="rounded-2xl bg-indigo-600 p-6 text-white shadow-lg shadow-indigo-100">
+          <div className="mb-6"><h2 className="text-lg font-bold">Compose message</h2><p className="mt-1 text-sm text-indigo-200">Separate multiple addresses with commas.</p></div>
+          <form onSubmit={onSubmit} className="space-y-4">
+            <label className="block text-sm font-medium">To<input value={form.to} onChange={updateField("to")} placeholder="recipient@example.com" className="mt-2 w-full rounded-xl border-0 bg-white/10 px-4 py-3 text-sm text-white outline-none placeholder:text-indigo-200 focus:ring-2 focus:ring-white/60" /></label>
+            <label className="block text-sm font-medium">CC<input value={form.cc} onChange={updateField("cc")} placeholder="cc@example.com" className="mt-2 w-full rounded-xl border-0 bg-white/10 px-4 py-3 text-sm text-white outline-none placeholder:text-indigo-200 focus:ring-2 focus:ring-white/60" /></label>
+            <label className="block text-sm font-medium">BCC<input value={form.bcc} onChange={updateField("bcc")} placeholder="bcc@example.com" className="mt-2 w-full rounded-xl border-0 bg-white/10 px-4 py-3 text-sm text-white outline-none placeholder:text-indigo-200 focus:ring-2 focus:ring-white/60" /></label>
+            <label className="block text-sm font-medium">Subject<input value={form.subject} onChange={updateField("subject")} placeholder="Message subject" className="mt-2 w-full rounded-xl border-0 bg-white/10 px-4 py-3 text-sm text-white outline-none placeholder:text-indigo-200 focus:ring-2 focus:ring-white/60" /></label>
+            <label className="block text-sm font-medium">Body<textarea value={form.body} onChange={updateField("body")} placeholder="Write your message..." rows={5} className="mt-2 w-full resize-y rounded-xl border-0 bg-white/10 px-4 py-3 text-sm text-white outline-none placeholder:text-indigo-200 focus:ring-2 focus:ring-white/60" /></label>
+            {error && <p className="rounded-lg bg-red-400/20 px-3 py-2 text-xs text-red-100">{error}</p>}
+            {sendStatus && (
+              <p className="rounded-lg bg-emerald-400/20 px-3 py-2 text-xs text-emerald-50">
+                Message sent successfully.
+                {sendStatus.snsStatus === "triggered"
+                  ? " SNS alert triggered."
+                  : sendStatus.snsStatus === "failed"
+                    ? " SNS alert failed."
+                    : " SNS notification is not configured."}
+              </p>
+            )}
+            <button disabled={isSending} className="flex w-full items-center justify-center gap-2 rounded-xl bg-white px-4 py-3 text-sm font-bold text-indigo-700 transition hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-70">
+              {isSending ? <LoaderCircle className="animate-spin" size={17} /> : <Send size={17} />}
+              {isSending ? "Sending..." : "Send"}
+            </button>
+          </form>
+        </section>
+
+        <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-7">
+          <div className="mb-6 flex items-center justify-between">
+            <div><h2 className="text-lg font-bold text-ink">Sent messages</h2><p className="mt-1 text-sm text-slate-500">Most recent first</p></div>
+            <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-500">{messages.length} messages</span>
+          </div>
+          {isLoading ? (
+            <div className="flex justify-center py-16 text-indigo-600"><LoaderCircle className="animate-spin" /></div>
+          ) : messages.length === 0 ? (
+            <div className="py-16 text-center text-sm text-slate-400">No messages yet.</div>
+          ) : (
+            <div className="space-y-3">
+              {messages.map((message) => (
+                <article key={message.id} className="rounded-xl border border-slate-100 p-4">
+                  <div className="mb-2 flex items-start justify-between gap-3">
+                    <div className="min-w-0"><h3 className="truncate text-sm font-semibold text-ink">{message.subject}</h3><p className="mt-1 truncate text-xs text-slate-500">To: {message.to_email}</p></div>
+                    <span className="shrink-0 rounded-full bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-600">{message.status}</span>
+                  </div>
+                  {(message.cc_email || message.bcc_email) && <p className="mb-2 text-xs text-slate-400">{message.cc_email ? `CC: ${message.cc_email} ` : ""}{message.bcc_email ? `BCC: ${message.bcc_email}` : ""}</p>}
+                  <p className="whitespace-pre-wrap text-sm leading-6 text-slate-600">{message.body}</p>
+                  <p className="mt-3 text-xs text-slate-400">{formatDate(message.created_at)}</p>
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
+      </div>
+    </div>
+  );
 }
